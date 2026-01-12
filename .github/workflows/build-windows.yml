@@ -1,0 +1,122 @@
+name: Build CubaCodex for Windows
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:  # Permite ejecutar manualmente desde GitHub
+    inputs:
+      reason:
+        description: 'Reason for triggering'
+        required: false
+        default: 'Manual build'
+
+jobs:
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          toolchain: stable
+      
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Install Node dependencies
+        run: npm install
+      
+      - name: Create icons directory
+        run: mkdir -p src-tauri/icons
+      
+      - name: Create icon.ico
+        run: copy public/icon-512.png src-tauri/icons/icon.ico
+      
+      - name: Generate other icon sizes
+        run: |
+          copy public/icon-512.png src-tauri/icons/32x32.png
+          copy public/icon-512.png src-tauri/icons/128x128.png
+          copy public/icon-512.png src-tauri/icons/256x256.png
+          copy public/icon-512.png src-tauri/icons/512x512.png
+          copy public/icon-512.png src-tauri/icons/128x128@2x.png
+      
+      - name: Build frontend
+        run: npm run build
+      
+      - name: Build Tauri app for Windows
+        run: cargo tauri build --target x86_64-pc-windows-msvc
+        env:
+          TAURI_BUNDLE: 'true'
+      
+      - name: Create artifacts directory
+        run: mkdir -p artifacts
+      
+      - name: Copy MSI installer to artifacts
+        run: |
+          if exist "src-tauri\target\release\bundle\msi\*.msi" (
+             copy "src-tauri\target\release\bundle\msi\*.msi" artifacts\
+          )
+      
+      - name: Copy EXE to artifacts
+        run: |
+          if exist "src-tauri\target\release\cubacodex.exe" (
+             copy "src-tauri\target\release\cubacodex.exe" artifacts\
+          )
+      
+      - name: List artifacts
+        run: |
+          echo "=== Artifacts Created ==="
+          dir artifacts
+      
+      - name: Upload MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: cubacodex-installer-msi
+          path: artifacts/*.msi
+          if-no-files-found: warn
+          retention-days: 90
+      
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: cubacodex-exe
+          path: artifacts/cubacodex.exe
+          if-no-files-found: warn
+          retention-days: 90
+      
+      - name: Upload release bundle info
+        if: success()
+        run: |
+          echo "::notice title=Build Success::Build completado exitosamente para Windows x64"
+          echo "Tamaño del MSI:" 
+          dir artifacts\*.msi | findstr ".msi"
+          echo "Tamaño del EXE:"
+          dir artifacts\cubacodex.exe | findstr ".exe"
